@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>D3 Interactive Network</title>
+    <script src="https://d3js.org/d3.v6.min.js"></script>
+    <style>
+        .node {
+            stroke: #fff;
+            stroke-width: 1.5px;
+        }
+        .link {
+            stroke: #999;
+            stroke-opacity: 0.6;
+        }
+        .hovered {
+            stroke: orange;
+            stroke-width: 3px;
+        }
+    </style>
+</head>
+<body>
+<svg width="2000" height="1200"></svg>
+<script>
+    var width = 2000;
+    var height = 1200;
+    var scatterWidth = width * 0.5; // 左半边宽度
+    var scatterHeight = height;
+
+    var width = 1600;
+    var height = 1200;
+    var scatterWidth = width * 0.5; // 左半边宽度
+    var scatterHeight = height;
+
+    // 定义阴影滤镜
+    var svg = d3.select("svg");
+    svg.append("defs").append("filter")
+        .attr("id", "drop-shadow")
+        .attr("height", "130%")
+        .append("feGaussianBlur")
+        .attr("in", "SourceAlpha")
+        .attr("stdDeviation", 3)
+        .append("feOffset")
+        .attr("dx", 2)
+        .attr("dy", 2)
+        .attr("result", "offsetblur")
+        .append("feComponentTransfer")
+        .append("feFuncA")
+        .attr("type", "linear")
+        .attr("slope", 0.5)
+        .append("feMerge")
+        .append("feMergeNode")
+        .append("feMergeNode")
+        .attr("in", "offsetblur");
+    // 加载 PCA 数据
+    d3.json("reduced_data_pca.json").then(function(scatterData) {
+        // 加载网络数据
+        d3.json("snapshots.json").then(function(networkData) {
+            // 加载节点标签数据
+            d3.json("vertexs.json").then(function(nodeLabels) {
+
+                var xExtent = d3.extent(scatterData, function(d) { return d[0]; });
+                var yExtent = d3.extent(scatterData, function(d) { return d[1]; });
+
+                var xScale = d3.scaleLinear().domain(xExtent).range([150, scatterWidth - 150]);
+                var yScale = d3.scaleLinear().domain(yExtent).range([height - 150, 150]);
+
+                var svg = d3.select("svg");
+
+                // 定义颜色比例尺
+                var colorScale = d3.scaleSequential(d3.interpolateYlOrRd)
+                    .domain([0, scatterData.length]);
+
+                // 根据标签设置颜色
+                function getColor(label) {
+                    if (label.startsWith("MP*")) return "yellow";
+                    if (label.startsWith("PC*")) return "green";
+                    if (label === "PC") return "blue";
+                    if (label.startsWith("PSI*")) return "red";
+                    return "gray";
+                }
+
+                // 绘制左侧散点图
+                svg.selectAll("circle")
+                    .data(scatterData)
+                    .enter()
+                    .append("circle")
+                    .attr("cx", function(d) { return xScale(d[0]); })
+                    .attr("cy", function(d) { return yScale(d[1]); })
+                    .attr("r", 3) // 调整点的大小
+                    .attr("fill", function(d, i) { return colorScale(i); })
+                    .attr("filter", "url(#drop-shadow)") // 应用滤镜
+                    .on("mouseover", function(event, d) {
+                        d3.select(this).attr("r", 10).classed("hovered", true);
+                    })
+                    .on("mouseout", function(event, d) {
+                        d3.select(this).attr("r", 5).classed("hovered", false);
+                    })
+                    .on("click", function(event, d) {
+                        var index = scatterData.indexOf(d);
+                        drawNetwork(index);
+                    });
+
+                // 添加连线
+                svg.selectAll("line")
+                    .data(d3.pairs(scatterData))
+                    .enter()
+                    .append("line")
+                    .attr("x1", function(d) { return xScale(d[0][0]); })
+                    .attr("y1", function(d) { return yScale(d[0][1]); })
+                    .attr("x2", function(d) { return xScale(d[1][0]); })
+                    .attr("y2", function(d) { return yScale(d[1][1]); })
+                    .attr("stroke", "gray")
+                    .attr("stroke-width", 1);
+
+                // 创建网络图分组
+                var networkGroup = svg.append("g").attr("class", "network")
+                    .attr("transform", "translate(" + (scatterWidth - 1000) + ",0)");
+
+                // 定义绘制网络图的函数
+                function drawNetwork(nodeId) {
+                    // 清空右侧区域
+                    networkGroup.selectAll("*").remove();
+
+                    // 获取节点数据
+                    var nodeData = networkData[nodeId];
+
+                    var nodes = {};
+                    nodeData.forEach(d => {
+                        nodes[d.from] = { id: d.from };
+                        nodes[d.to] = { id: d.to };
+                    });
+
+                    var links = nodeData.map(d => {
+                        return { source: d.from, target: d.to, weight: d.weight };
+                    });
+
+                    // 创建力导向布局
+                    var simulation = d3.forceSimulation()
+                        .nodes(Object.values(nodes))
+                        .force("link", d3.forceLink(links).distance(100).strength(1).id(function(d) { return d.id; }))
+                        .force("charge", d3.forceManyBody().strength(-300))
+                        .force("center", d3.forceCenter(width * 0.75, height / 2))
+                        .on("tick", function() {
+                            link.attr("x1", function(d) { return d.source.x; })
+                                .attr("y1", function(d) { return d.source.y; })
+                                .attr("x2", function(d) { return d.target.x; })
+                                .attr("y2", function(d) { return d.target.y; });
+
+                            node.attr("cx", function(d) { return d.x; })
+                                .attr("cy", function(d) { return d.y; });
+                        });
+
+                    // 绘制连线
+                    var link = networkGroup.selectAll(".link")
+                        .data(links)
+                        .enter().append("line")
+                        .attr("class", "link")
+                        .attr("stroke-width", function(d) { return Math.sqrt(d.weight); });
+
+                    // 绘制节点
+                    var node = networkGroup.selectAll(".node")
+                        .data(Object.values(nodes))
+                        .enter().append("circle")
+                        .attr("class", "node")
+                        .attr("r", 5)
+                        .attr("fill", function(d) { return getColor(nodeLabels[d.id]); })
+                        .call(d3.drag()
+                            .on("start", dragstarted)
+                            .on("drag", dragged)
+                            .on("end", dragended));
+
+                    function dragstarted(event, d) {
+                        if (!event.active) simulation.alphaTarget(0.3).restart();
+                        d.fx = d.x;
+                        d.fy = d.y;
+                    }
+
+                    function dragged(event, d) {
+                        d.fx = event.x;
+                        d.fy = event.y;
+                    }
+
+                    function dragended(event, d) {
+                        if (!event.active) simulation.alphaTarget(0);
+                        d.fx = null;
+                        d.fy = null;
+                    }
+                }
+            });
+        });
+    });
+</script>
+</body>
+</html>
